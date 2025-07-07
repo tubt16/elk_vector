@@ -1,0 +1,82 @@
+# Set global options
+data_dir: "/var/lib/vector"
+
+# Vector's API (disabled by default)
+# Enable and try it out with the `vector top` command
+# NOTE: this is _enabled_ for helm chart deployments, see: https://github.com/vectordotdev/helm-charts/blob/develop/charts/vector/examples/datadog-values.yaml#L78-L81
+api:
+  enabled: false
+
+# Ingest data by tailing one or more files
+sources:
+  tubt_test_logs:
+    type: docker_logs
+    auto_partial_merge: true
+    docker_host: /var/run/docker.sock
+    partial_event_marker_field: _partial
+    retry_backoff_secs: 2
+
+# Structure and parse via Vector's Remap Language
+transforms:
+  tubt_test_parser:
+    inputs:
+      - "tubt_test_logs"
+    type: "remap"
+    source: |
+      # Set default values first
+      .container = replace!(.container_name, "/", "")
+      .host = get_hostname!()
+      .timestamp = now()
+      
+      # Remove all Docker labels to prevent mapping conflicts
+      del(.label)
+      
+      # Safely attempt JSON parsing
+      parsed, err = parse_json(.message)
+      if err == null {
+        if is_object(parsed) {
+          # Merge parsed JSON into root, but handle potential conflicts
+          for_each(object!(parsed)) -> |key, value| {
+            # Skip Docker labels and other problematic fields
+            if !includes(["container", "host", "timestamp", "message", "container_name"], key) && !starts_with(key, "label.") {
+              # Only add non-conflicting fields
+              . = set!(., [key], value)
+            }
+          }
+        }
+      } else {
+        # Log parsing failures for debugging
+        .parse_error = string!(err)
+      }
+      
+      # Ensure container field always exists with a fallback
+      if !exists(.container) || .container == "" {
+        .container = "unknown"
+      }
+      
+      # Clean up container name further (remove any remaining special chars)
+      .container = replace(.container, r'[^a-zA-Z0-9\-_]', "_")
+    timezone: local
+
+  # Sample the data to save on cost
+  tubt_sampler:
+    inputs:
+      - "tubt_test_parser"
+    type: "sample"
+    rate: 2 # only keep 50% (1/`rate`)
+
+# Send structured data to a short-term storage
+sinks:
+  es_tubt_test:
+    inputs:
+      - "tubt_sampler"       # only take sampled data
+    type: "elasticsearch"
+    endpoints:
+      - "http://xx.xx.xx.xx:9200"
+    bulk:
+      action: "create"
+      index: "log-vector-{{ container }}-%Y-%m-%d" # daily indices
+    auth:
+      strategy: "basic"
+      user: "elastic"
+      password: "changeme"

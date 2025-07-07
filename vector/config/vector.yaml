@@ -1,0 +1,62 @@
+# Set global options
+data_dir: "/var/lib/vector"
+
+# Vector's API (disabled by default)
+# Enable and try it out with the `vector top` command
+# NOTE: this is _enabled_ for helm chart deployments, see: https://github.com/vectordotdev/helm-charts/blob/develop/charts/vector/examples/datadog-values.yaml#L78-L81
+api:
+  enabled: false
+
+# Ingest data by tailing one or more files
+sources:
+  tubt_test_logs:
+    type: docker_logs
+    auto_partial_merge: true
+    docker_host: /var/run/docker.sock
+    partial_event_marker_field: _partial
+    retry_backoff_secs: 2
+
+# Structure and parse via Vector's Remap Language
+transforms:
+  tubt_test_parser:
+    inputs:
+      - "tubt_test_logs"
+    type: "remap"
+    source: |-
+      . = parse_json!(.message)
+      .new_field = "new value"
+      .status = to_int!(.status)
+      .new_name = del(.old_name)
+      # Guard duration parsing
+      if exists(.duration) && is_string(.duration) {
+        .duration = parse_duration!(.duration, "s")
+      }
+      # Remove or convert label.com.docker.compose.project to string
+      if exists(.label.com.docker.compose.project) && !is_string(.label.com.docker.compose.project) {
+        .label.com.docker.compose.project, err = to_string(.label.com.docker.compose.project)
+        if err != null { del(.label.com.docker.compose.project) }
+      }
+    timezone: local
+
+  # Sample the data to save on cost
+  tubt_sampler:
+    inputs:
+      - "tubt_test_parser"
+    type: "sample"
+    rate: 2 # only keep 50% (1/`rate`)
+
+# Send structured data to a short-term storage
+sinks:
+  es_tubt_test:
+    inputs:
+      - "tubt_sampler"       # only take sampled data
+    type: "elasticsearch"
+    endpoints:
+      - "http://10.60.1.39:9200"
+    bulk:
+      action: "create"
+      index: "vector-tubt-%Y-%m-%d" # daily indices
+    auth:
+      strategy: "basic"
+      user: "elastic"
+      password: "changeme"
