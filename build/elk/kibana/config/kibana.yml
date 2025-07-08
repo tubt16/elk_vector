@@ -7,6 +7,15 @@ server.host: "0.0.0.0"
 elasticsearch.hosts: [ "http://elasticsearch:9200" ]
 xpack.monitoring.ui.container.elasticsearch.enabled: true
 
+
+monitoring.enabled: true
+monitoring.kibana.collection.enabled: true
+
+# Excute kibana-container to generate encryption keys
+# ./bin/kibana-encryption-keys generate
+xpack.encryptedSavedObjects.encryptionKey: 48c651ce7a8d802cb3b8c0355a3b91c6
+xpack.reporting.encryptionKey: 36e08082ab50a8e3ed3341902f4d44d6
+xpack.security.encryptionKey: a7e3e276ba0f5407df616e15300d3221
 ## X-Pack security credentials
 #
 elasticsearch.username: kibana
